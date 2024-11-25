@@ -10,7 +10,22 @@ from cryptography.fernet import Fernet, InvalidToken
 import hashlib
 import bcrypt
 
-ENCRYPTION_KEY = Fernet.generate_key()
+# File to store the encryption key
+KEY_FILE = "encryption_key.key"
+
+# Function to load or generate the key
+def get_encryption_key():
+    if os.path.exists(KEY_FILE):
+        with open(KEY_FILE, 'rb') as key_file:
+            return key_file.read()
+    else:
+        key = Fernet.generate_key()
+        with open(KEY_FILE, 'wb') as key_file:
+            key_file.write(key)
+        return key
+
+# Load the key when the program starts
+ENCRYPTION_KEY = get_encryption_key()
 cipher = Fernet(ENCRYPTION_KEY)
 
 # MySQL connection
