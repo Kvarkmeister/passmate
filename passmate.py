@@ -7,11 +7,37 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from cryptography.fernet import Fernet, InvalidToken
 import bcrypt
+import sys
+import keyboard
+
 
 # File to store the encryption key
 KEY_FILE = "encryption_key.key"
 
 # Function to load or generate the key
+
+
+def masked_input(prompt="Enter password: "):
+    print(prompt, end='', flush=True)
+    password = ""
+
+    # Start listening for keypresses
+    while True:
+        event = keyboard.read_event(suppress=True)  # Suppress echoes to the terminal
+        if event.event_type == "down":  # Only handle key press, not release
+            if event.name == "enter":  # Enter key to finish input
+                print()  # Move to the next line
+                break
+            elif event.name == "backspace":  # Handle backspace
+                if len(password) > 0:
+                    password = password[:-1]
+                    # Move the cursor back, overwrite with a space, and move back again
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+            elif len(event.name) == 1:  # Valid character input (ignores special keys)
+                password += event.name
+                print("*", end='', flush=True)
+    return password
 
 
 def get_encryption_key():
@@ -235,7 +261,6 @@ def user_exists(username):
 
 
 # Delete a specific password entry for a service
-# Delete a specific password entry for a service
 def delete_password(service, user_key):
     connection = get_db_connection('passmate')
     cursor = connection.cursor()
@@ -256,27 +281,33 @@ def delete_password(service, user_key):
                 except InvalidToken:
                     print(f"{idx + 1}. Decryption failed for this entry.")
 
-            # Let the user choose an entry to delete
-            choice = input(f"Enter the number of the entry to delete (1-{len(entries)}): ")
-            if choice.isdigit():
-                choice = int(choice)
-                if 1 <= choice <= len(entries):
-                    # Identify the selected entry
-                    selected_entry = entries[choice - 1]
-                    encrypted_username = selected_entry[1]
-                    encrypted_password = selected_entry[2]
+            while True:
+                # Prompt the user to choose an entry to delete or exit
+                choice = input(f"Enter the number of the entry to delete (1-{len(entries)}), or type 'exit' to return to the previous menu: ")
+                if choice.lower() == 'exit':
+                    print("Exiting to the previous menu.")
+                    return  # Exit the function immediately
 
-                    # Delete the selected entry
-                    cursor.execute(
-                        f"DELETE FROM {user_key}_passwords WHERE service = %s AND username = %s AND password = %s",
-                        (service, encrypted_username, encrypted_password)
-                    )
-                    connection.commit()
-                    print(f"Password entry {choice} for service '{service}' has been deleted.")
+                if choice.isdigit():
+                    choice = int(choice)
+                    if 1 <= choice <= len(entries):
+                        # Identify the selected entry
+                        selected_entry = entries[choice - 1]
+                        encrypted_username = selected_entry[1]
+                        encrypted_password = selected_entry[2]
+
+                        # Delete the selected entry
+                        cursor.execute(
+                            f"DELETE FROM {user_key}_passwords WHERE service = %s AND username = %s AND password = %s",
+                            (service, encrypted_username, encrypted_password)
+                        )
+                        connection.commit()
+                        print(f"Password entry {choice} for service '{service}' has been deleted.")
+                        break  # Exit the loop after a successful deletion
+                    else:
+                        print("Invalid selection. Please try again.")
                 else:
-                    print("Invalid selection. No entry deleted.")
-            else:
-                print("Invalid input. No entry deleted.")
+                    print("Invalid input. Please try again.")
         else:
             print(f"No entries found for service '{service}'.")
     except mysql.connector.Error as e:
@@ -286,6 +317,44 @@ def delete_password(service, user_key):
         cursor.close()
         connection.close()
 
+# Delete user and all their data
+
+
+def delete_user(username, password):
+    connection = get_db_connection('passmate')
+    cursor = connection.cursor()
+
+    try:
+        # Authenticate the user
+        cursor.execute("SELECT password FROM users WHERE username = %s", (username,))
+        user = cursor.fetchone()
+
+        if user and bcrypt.checkpw(password.encode(), user[0].encode()):
+            # Double confirmation
+            print("Are you sure you want to delete your account? This action is irreversible.")
+            confirm1 = input("Type 'DELETE' to confirm: ")
+            if confirm1 == "DELETE":
+                confirm2 = input("Type 'CONFIRM' to finalize: ")
+                if confirm2 == "CONFIRM":
+                    # Drop the user's passwords table
+                    cursor.execute(f"DROP TABLE IF EXISTS {username}_passwords")
+
+                    # Delete the user from the users table
+                    cursor.execute("DELETE FROM users WHERE username = %s", (username,))
+                    connection.commit()
+
+                    print(f"User '{username}' and all associated data have been deleted.")
+                else:
+                    print("Account deletion canceled.")
+            else:
+                print("Account deletion canceled.")
+        else:
+            print("Authentication failed. Cannot delete account.")
+    except mysql.connector.Error as e:
+        print(f"An error occurred: {e}")
+    finally:
+        cursor.close()
+        connection.close()
 
 
 def main():
@@ -298,7 +367,7 @@ def main():
 
         if choice == "1":
             username = input("Enter your username: ")
-            password = input("Enter your password: ")
+            password = masked_input("Enter your password: ")
 
             if authenticate_user(username, password):
                 print("Authentication successful!")
@@ -310,13 +379,14 @@ def main():
                     print("2. Retrieve a password")
                     print("3. View saved services")
                     print("4. Delete a password")
-                    print("5. Exit")
+                    print("5. Delete my account")
+                    print("6. Exit")
                     choice = input("Enter your choice: ")
 
                     if choice == "1":
                         service = input("Enter the service name: ")
                         service_username = input("Enter the username: ")
-                        service_password = input("Enter the password: ")
+                        service_password = masked_input("Enter the password: ")
                         save_password(service, service_username, service_password, password_key)
                         print("Password saved successfully!")
 
@@ -332,11 +402,17 @@ def main():
                         delete_password(service, password_key)
 
                     elif choice == "5":
+                        print("Deleting your account is irreversible!")
+                        delete_user(username, password)
+                        break  # Exit to the main menu after account deletion
+
+                    elif choice == "6":
                         print("Goodbye!")
                         break
 
                     else:
                         print("Invalid option, please try again.")
+
             else:
                 print("Authentication failed!")
 
@@ -344,7 +420,7 @@ def main():
             while True:
                 username = input("Enter your username: ")
                 if not user_exists(username):  # Check if the username already exists
-                    password = input("Enter your password: ")
+                    password = masked_input("Enter your password: ")
                     if create_new_user(username, password):
                         print(f"New user {username} created successfully!")
                         break  # Exit the loop after successful user creation
