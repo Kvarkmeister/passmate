@@ -1,5 +1,4 @@
 import os
-import json
 import mysql.connector
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -7,13 +6,14 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from cryptography.fernet import Fernet, InvalidToken
-import hashlib
 import bcrypt
 
 # File to store the encryption key
 KEY_FILE = "encryption_key.key"
 
 # Function to load or generate the key
+
+
 def get_encryption_key():
     if os.path.exists(KEY_FILE):
         with open(KEY_FILE, 'rb') as key_file:
@@ -25,10 +25,14 @@ def get_encryption_key():
         return key
 
 # Load the key when the program starts
+
+
 ENCRYPTION_KEY = get_encryption_key()
 cipher = Fernet(ENCRYPTION_KEY)
 
 # MySQL connection
+
+
 def get_db_connection(database=None):
     connection = mysql.connector.connect(
         host='localhost',
@@ -44,6 +48,7 @@ def get_db_connection(database=None):
         connection.database = database
 
     return connection
+
 
 # Create table for user-specific data (password storage table)
 def create_user_table(username):
@@ -64,6 +69,8 @@ def create_user_table(username):
     connection.close()
 
 # Generate or load AES encryption key from password
+
+
 def load_or_create_aes_key(password, salt):
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -76,13 +83,15 @@ def load_or_create_aes_key(password, salt):
     return key
 
 # Encrypt data using AES
+
+
 def encrypt(data, password):
     salt = os.urandom(16)
     key = load_or_create_aes_key(password, salt)
 
     iv = os.urandom(16)
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
+    encrypted = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    encryptor = encrypted.encryptor()
 
     padder = padding.PKCS7(128).padder()
     padded_data = padder.update(data.encode()) + padder.finalize()
@@ -91,17 +100,20 @@ def encrypt(data, password):
     return salt, iv, encrypted_data
 
 # Decrypt data using AES
+
+
 def decrypt(encrypted_data, password, salt, iv):
     key = load_or_create_aes_key(password, salt)
 
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
+    encrypted = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    decryptor = encrypted.decryptor()
 
     decrypted_data = decryptor.update(encrypted_data) + decryptor.finalize()
 
     unpadder = padding.PKCS7(128).unpadder()
     original_data = unpadder.update(decrypted_data) + unpadder.finalize()
     return original_data.decode()
+
 
 # MySQL Authentication
 def authenticate_user(username, password):
@@ -118,6 +130,8 @@ def authenticate_user(username, password):
     return False
 
 # Create a new user in the database
+
+
 def create_new_user(username, password):
     connection = get_db_connection('passmate')
     cursor = connection.cursor()
@@ -163,6 +177,7 @@ def save_password(service, username, password, user_key):
 
     connection.commit()
     connection.close()
+
 
 # Retrieve all passwords for a service
 def retrieve_password(service, user_key):
@@ -218,34 +233,58 @@ def user_exists(username):
 
     return user is not None
 
-# Delete a password for a service
+
+# Delete a specific password entry for a service
+# Delete a specific password entry for a service
 def delete_password(service, user_key):
     connection = get_db_connection('passmate')
     cursor = connection.cursor()
 
     try:
-        # Check if the service exists for the given user
-        cursor.execute(f"SELECT service FROM {user_key}_passwords WHERE service = %s", (service,))
-        service_exists = cursor.fetchone()
+        # Retrieve all entries for the given service
+        cursor.execute(f"SELECT service, username, password, salt, iv FROM {user_key}_passwords WHERE service = %s", (service,))
+        entries = cursor.fetchall()
 
-        # Clear any remaining results in the cursor
-        cursor.fetchall()
+        if entries:
+            print(f"Entries for service '{service}':")
+            for idx, entry in enumerate(entries):
+                try:
+                    # Decrypt the username and password for each entry
+                    decrypted_username = cipher.decrypt(entry[1]).decode()
+                    decrypted_password = cipher.decrypt(entry[2]).decode()
+                    print(f"{idx + 1}. Username: {decrypted_username}, Password: {decrypted_password}")
+                except InvalidToken:
+                    print(f"{idx + 1}. Decryption failed for this entry.")
 
-        if service_exists:
-            # If the service exists, delete the password entry for the given service
-            cursor.execute(f"DELETE FROM {user_key}_passwords WHERE service = %s", (service,))
-            connection.commit()
-            print(f"Password entry for '{service}' has been deleted.")
+            # Let the user choose an entry to delete
+            choice = input(f"Enter the number of the entry to delete (1-{len(entries)}): ")
+            if choice.isdigit():
+                choice = int(choice)
+                if 1 <= choice <= len(entries):
+                    # Identify the selected entry
+                    selected_entry = entries[choice - 1]
+                    encrypted_username = selected_entry[1]
+                    encrypted_password = selected_entry[2]
+
+                    # Delete the selected entry
+                    cursor.execute(
+                        f"DELETE FROM {user_key}_passwords WHERE service = %s AND username = %s AND password = %s",
+                        (service, encrypted_username, encrypted_password)
+                    )
+                    connection.commit()
+                    print(f"Password entry {choice} for service '{service}' has been deleted.")
+                else:
+                    print("Invalid selection. No entry deleted.")
+            else:
+                print("Invalid input. No entry deleted.")
         else:
-            # If the service doesn't exist, inform the user
-            print(f"Service '{service}' not found. No password entry was deleted.")
+            print(f"No entries found for service '{service}'.")
     except mysql.connector.Error as e:
         print(f"An error occurred: {e}")
     finally:
         # Ensure the cursor and connection are properly closed
         cursor.close()
         connection.close()
-
 
 
 
@@ -301,9 +340,6 @@ def main():
             else:
                 print("Authentication failed!")
 
-
-
-
         elif choice == "2":
             while True:
                 username = input("Enter your username: ")
@@ -314,7 +350,6 @@ def main():
                         break  # Exit the loop after successful user creation
                 else:
                     print("Username already exists. Please choose a different username.")
-
 
         elif choice == "3":
             print("Exiting the Password Manager...")
