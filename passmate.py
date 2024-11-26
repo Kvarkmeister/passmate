@@ -334,7 +334,7 @@ def save_password(service, username, password, user_key):
 # Retrieve all passwords for a service
 
 
-def retrieve_password(service, user_key):
+def retrieve_password(user_key, service):
     connection = get_db_connection('passmate')
     cursor = connection.cursor()
 
@@ -434,13 +434,13 @@ def delete_password(service, user_key):
                     # Decrypt the username and password for each entry
                     decrypted_username = cipher.decrypt(entry[1]).decode()
                     decrypted_password = cipher.decrypt(entry[2]).decode()
-                    print(f"{idx + 1}. Username: {decrypted_username}, Password: {decrypted_password}\n")
+                    print(f"{idx + 1}. Username: {decrypted_username}, Password: {decrypted_password}")
                 except InvalidToken:
                     print(f"{idx + 1}. Decryption failed for this entry.")
 
             while True:
                 # Prompt the user to choose an entry to delete or exit
-                choice_str = input(f"Enter the number of the entry to delete (1-{len(entries)}), "
+                choice_str = input(f"\nEnter the number of the entry to delete (1-{len(entries)}), "
                                    f"or type 'exit' to return to the previous menu: ")
 
                 valid, choice = validate_number(choice_str, len(entries))
@@ -535,13 +535,22 @@ def main():
             continue
 
         if choice == 1:
-            username = input("\nEnter your username: ")
+            # Log in process
+            username = input("\nEnter your username (or type 'exit' to return to the main menu): ")
+            if username.lower() == 'exit':
+                print("Returning to the main menu.")
+                continue  # Go back to the main menu
+
             valid, username = validate_string(username, "username")
             if not valid:
                 print(username)  # Display error message from `validate_string`
                 continue
 
-            password = masked_input("Enter your password: ")
+            password = masked_input("Enter your password (or type 'exit' to return to the main menu): ")
+            if password.lower() == 'exit':
+                print("Returning to the main menu.")
+                continue  # Go back to the main menu
+
             valid, password = validate_string(password, "password")
             if not valid:
                 print(password)  # Display error message from `validate_string`
@@ -566,19 +575,29 @@ def main():
                         continue
 
                     if choice == 1:
-                        service = input("Enter the service name (Google, Steam, Discord, etc.): ")
+                        # Add a new entry
+                        service = input("Enter the service name (or type 'exit' to return to the main menu): ")
+                        if service.lower() == 'exit':
+                            print("Returning to the previous menu.")
+                            break  # Go back to the previous menu
                         valid, service = validate_string(service, "service")
                         if not valid:
                             print(service)
                             continue
 
-                        service_username = input("Enter the username: ")
+                        service_username = input("Enter the username (or type 'exit' to return to the previous menu): ")
+                        if service_username.lower() == 'exit':
+                            print("Returning to the previous menu.")
+                            break  # Go back to the previous menu
                         valid, service_username = validate_string(service_username, "username")
                         if not valid:
                             print(service_username)
                             continue
 
-                        service_password = masked_input("Enter the password: ")
+                        service_password = masked_input("Enter the password (or type 'exit' to return to the previous menu): ")
+                        if service_password.lower() == 'exit':
+                            print("Returning to the previous menu.")
+                            break  # Go back to the previous menu
                         valid, service_password = validate_string(service_password, "password")
                         if not valid:
                             print(service_password)
@@ -588,33 +607,21 @@ def main():
                         print("Password saved successfully!")
 
                     elif choice == 2:
-                        while True:
-                            # Prompt for username
-                            username = input("Enter a new username: ")
-                            valid, username = validate_string(username, "username")
-                            if not valid:
-                                print(username)  # Error message
-                                continue
-                            # Check if username already exists
-                            if user_exists(username):
-                                print("Username already exists. Please choose a different username.")
-                                continue
-                            # Prompt for password
-                            password = masked_input("Enter a new password: ")
-                            valid, password = validate_string(password, "password")
-                            if not valid:
-                                print(password)  # Error message
-                                continue
-                            # Create user if both inputs are valid
-                            if create_new_user(username, password):
-                                print(f"\nNew user '{username}' created successfully! You may log in now.")
-                                break
+                        service = input("Enter the service entry to retrieve credentials: ")
+                        valid, service = validate_string(service, "service")
+                        if not valid:
+                            print(service)
+                            continue
+                        retrieve_password(password_key, service)
 
                     elif choice == 3:
                         list_services(password_key)
 
                     elif choice == 4:
-                        service = input("Enter the service entry to delete: ")
+                        service = input("Enter the service entry to delete (or type 'exit' to return to the previous menu): ")
+                        if service.lower() == 'exit':
+                            print("Returning to the previous menu.")
+                            break  # Go back to the previous menu
                         valid, service = validate_string(service, "service")
                         if not valid:
                             print(service)
@@ -627,30 +634,37 @@ def main():
                         if "deleted" in result.lower():
                             # Account was deleted, so return to the main menu (log out the user)
                             print("Logging out and returning to the main menu...")
-                            break  # Exit the loop to go back to the main menu
+                            break  # Exit to the main menu
 
                         elif "canceled" in result.lower():
                             # Deletion was canceled, stay logged in
                             print("Returning to the menu...\n")
-                            continue  # Stay in the logged-in menu
+                            continue  # Stay logged in
 
                     elif choice == 6:
                         print("Logging out...")
-                        break
+                        break  # Exit to the main menu
 
             else:
                 print("\nAuthentication failed!")
 
         elif choice == 2:
+            # User creation process
             while True:
-                username = input("Enter a new username: ")
+                username = input("Enter a new username (or type 'exit' to return to the main menu): ")
+                if username.lower() == 'exit':
+                    print("Returning to the main menu.")
+                    break  # Go back to the main menu
                 valid, username = validate_string(username, "username")
                 if not valid:
                     print(username)
                     continue
 
                 if not user_exists(username):
-                    password = masked_input("Enter a new password: ")
+                    password = masked_input("Enter a new password (or type 'exit' to return to the main menu): ")
+                    if password.lower() == 'exit':
+                        print("Returning to the main menu.")
+                        break  # Go back to the main menu
                     valid, password = validate_string(password, "password")
                     if not valid:
                         print(password)
@@ -658,13 +672,13 @@ def main():
 
                     if create_new_user(username, password):
                         print(f"New user '{username}' created successfully! You may log in now.")
-                        break
+                        break  # Exit to the main menu
                 else:
                     print("Username already exists. Please choose a different username.")
 
         elif choice == 3:
-            print("Exiting the Password Manager...")
-            break
+            print("Exiting the Password Manager.")
+            break  # Exit the program
 
         else:
             print("Invalid option, please try again.")
