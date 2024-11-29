@@ -223,14 +223,14 @@ def encrypt(data, password):
     iv = os.urandom(16)  # Generate a random IV for CBC mode
 
     # Create the AES cipher object in CBC mode
-    ciphered = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    ciphertext = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
 
-    # Pad the data to make it a multiple of the block size (128 bits)
-    padder = padding.PKCS7(128).padder()
+    # Pad data to be a multiple of the block size (16 bytes for AES)
+    padder = padding.PKCS7(128).padder()  # 128 bits = 16 bytes (AES block size)
     padded_data = padder.update(data.encode()) + padder.finalize()
 
     # Encrypt the padded data
-    encryptor = ciphered.encryptor()
+    encryptor = ciphertext.encryptor()
     encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
 
     return salt, iv, encrypted_data
@@ -244,12 +244,13 @@ def decrypt(encrypted_data, password, salt, iv):
     key = load_or_create_aes_key(password, salt)  # Derive the key from the password and salt
 
     # Create the AES cipher object in CBC mode
-    ciphered = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    ciphertext = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
 
     # Decrypt the data
-    decryptor = ciphered.decryptor()
+    decryptor = ciphertext.decryptor()
     decrypted_data = decryptor.update(encrypted_data) + decryptor.finalize()
 
+    # Remove padding after decryption
     unpadder = padding.PKCS7(128).unpadder()
     original_data = unpadder.update(decrypted_data) + unpadder.finalize()
 
@@ -627,7 +628,8 @@ def main():
                             print(service_username)
                             continue
 
-                        service_password = masked_input("Enter the password (or type 'exit' to return to the previous menu): ")
+                        service_password = masked_input("Enter the password (or type 'exit'"
+                                                        "to return to the previous menu): ")
                         if service_password.lower() == 'exit':
                             print(dupe)
                             break  # Go back to the previous menu
@@ -651,7 +653,8 @@ def main():
                         list_services(password_key)
 
                     elif choice == 4:
-                        service = input("Enter the service entry to delete (or type 'exit' to return to the previous menu): ")
+                        service = input("Enter the service entry to delete (or type 'exit'"
+                                        "to return to the previous menu): ")
                         if service.lower() == 'exit':
                             print(dupe)
                             break  # Go back to the previous menu
@@ -707,7 +710,7 @@ def main():
                         print(f"New user '{username}' created successfully! You may log in now.")
                         break  # Exit to the main menu
                 else:
-                    print("Username already exists. Please choose a different username.")
+                    print("Username already exists. Please choose a different username.\n")
 
         elif choice == 3:
             print("Exiting the Password Manager.")
