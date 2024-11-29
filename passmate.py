@@ -1,7 +1,5 @@
 import os
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from cryptography.fernet import Fernet, InvalidToken
@@ -14,6 +12,7 @@ import sqlite3
 
 # File to store the encryption key
 KEY_FILE = "encryption_key.key"
+dupe = "Returning to the main menu."
 
 # Function to load or generate the key
 
@@ -136,14 +135,16 @@ cipher = Fernet(ENCRYPTION_KEY)
 
 def get_db_connection(database=None):
     try:
-        # Define the path to the database file
+        # Default to a fallback database name if none is provided
         if database:
             db_file = f"{database}.db"  # SQLite file will have a .db extension
+        else:
+            db_file = "default.db"  # Default database name if no database is provided
 
-            # Check if the database file already exists
-            if not os.path.exists(db_file):
-                # If it doesn't exist, create the database (this happens automatically in SQLite)
-                print(f"Database file '{db_file}' not found. Creating new database.")
+        # Check if the database file already exists
+        if not os.path.exists(db_file):
+            # If it doesn't exist, create the database (this happens automatically in SQLite)
+            print(f"Database file '{db_file}' not found. Creating new database.")
 
         # Connect to the SQLite database file (it will create the file if it doesn't exist)
         connection = sqlite3.connect(db_file)
@@ -195,46 +196,63 @@ def create_user_table(username):
 
 
 def load_or_create_aes_key(password, salt):
+    """
+    Derives an AES key from the password and salt using PBKDF2 HMAC.
+    """
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
-        length=32,
+        length=32,  # 256-bit key
         salt=salt,
         iterations=100000,
         backend=default_backend()
     )
-    key = kdf.derive(password.encode())
+    key = kdf.derive(password.encode())  # Use password to derive key
     return key
-
-# Encrypt data using AES
 
 
 def encrypt(data, password):
-    salt = os.urandom(16)
-    key = load_or_create_aes_key(password, salt)
+    """
+    Encrypt data using AES with CBC mode and PKCS7 padding.
+    Returns the salt, IV, and encrypted data.
+    """
+    salt = os.urandom(16)  # Generate random salt for key derivation
+    key = load_or_create_aes_key(password, salt)  # Derive the key from the password and salt
+    iv = os.urandom(16)  # Generate a random IV for CBC mode
 
-    iv = os.urandom(16)
-    encrypted = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    encryptor = encrypted.encryptor()
+    # Create the AES cipher object in CBC mode
+    ciphered = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
 
+    # Pad the data to make it a multiple of the block size (128 bits)
     padder = padding.PKCS7(128).padder()
     padded_data = padder.update(data.encode()) + padder.finalize()
 
+    # Encrypt the padded data
+    encryptor = ciphered.encryptor()
     encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
-    return salt, iv, encrypted_data
 
-# Decrypt data using AES
+    return salt, iv, encrypted_data
 
 
 def decrypt(encrypted_data, password, salt, iv):
-    key = load_or_create_aes_key(password, salt)
+    """
+    Decrypt data using AES with CBC mode and PKCS7 padding.
+    Returns the decrypted data as a string.
+    """
+    key = load_or_create_aes_key(password, salt)  # Derive the key from the password and salt
 
-    encrypted = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    decryptor = encrypted.decryptor()
+    # Create the AES cipher object in CBC mode
+    ciphered = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
 
+    # Decrypt the data
+    decryptor = ciphered.decryptor()
     decrypted_data = decryptor.update(encrypted_data) + decryptor.finalize()
 
     unpadder = padding.PKCS7(128).unpadder()
     original_data = unpadder.update(decrypted_data) + unpadder.finalize()
+
     return original_data.decode()
 
 
@@ -397,20 +415,17 @@ def user_exists(username):
     """
     connection = get_db_connection('passmate')
     cursor = connection.cursor()
-
     try:
         # Use the correct SQLite placeholder "?" for the query
         cursor.execute("SELECT username FROM users WHERE username = ?", (username,))
         user = cursor.fetchone()
         connection.close()
-
         return user is not None
-
     except sqlite3.OperationalError as e:
         # If the table doesn't exist, create the users table
         if 'no such table' in str(e):
             print("Users table does not exist. Creating it now...")
-            create_user_table()  # Create the table without needing a username
+            create_user_table(None)  # Pass None or a default value to create the table
             return False  # Return False as no users exist yet
         else:
             print(f"An error occurred: {e}")
@@ -418,67 +433,68 @@ def user_exists(username):
             return False
 
 
-
 # Delete a specific password entry for a service
+def fetch_entries(cursor, service, user_key):
+    cursor.execute(f"SELECT service, username, password, salt, iv "
+                   f"FROM {user_key}_passwords WHERE service = ?", (service,))
+    return cursor.fetchall()
+
+
+def print_entries(entries):
+    for idx, entry in enumerate(entries):
+        try:
+            decrypted_username = cipher.decrypt(entry[1]).decode()
+            decrypted_password = cipher.decrypt(entry[2]).decode()
+            print(f"{idx + 1}. Username: {decrypted_username}, Password: {decrypted_password}")
+        except InvalidToken:
+            print(f"{idx + 1}. Decryption failed for this entry.")
+
+
+def get_user_choice(entries):
+    while True:
+        choice_str = input(f"\nEnter the number of the entry to delete (1-{len(entries)}), "
+                           f"or type 'exit' to return to the previous menu: ")
+        valid, choice = validate_number(choice_str, len(entries))
+        if valid:
+            if choice == 'exit':
+                print("Exiting to the previous menu.\n")
+                return None  # Return None to indicate no action
+            return choice  # Return the choice for deletion
+        else:
+            print(choice)  # Print the error message from `validate_number`
+
+
 def delete_password(service, user_key):
     connection = get_db_connection('passmate')
     cursor = connection.cursor()
 
     try:
-        # Retrieve all entries for the given service
-        cursor.execute(f"SELECT service, username, password, salt, iv "
-                       f"FROM {user_key}_passwords WHERE service = ?", (service,))
-        entries = cursor.fetchall()
+        entries = fetch_entries(cursor, service, user_key)
 
-        if entries:
-            print(f"Entries for service '{service}':")
-            for idx, entry in enumerate(entries):
-                try:
-                    # Decrypt the username and password for each entry
-                    decrypted_username = cipher.decrypt(entry[1]).decode()
-                    decrypted_password = cipher.decrypt(entry[2]).decode()
-                    print(f"{idx + 1}. Username: {decrypted_username}, Password: {decrypted_password}")
-                except InvalidToken:
-                    print(f"{idx + 1}. Decryption failed for this entry.")
-
-            while True:
-                # Prompt the user to choose an entry to delete or exit
-                choice_str = input(f"\nEnter the number of the entry to delete (1-{len(entries)}), "
-                                   f"or type 'exit' to return to the previous menu: ")
-
-                valid, choice = validate_number(choice_str, len(entries))
-                if valid:
-                    if choice == 'exit':
-                        print("Exiting to the previous menu.\n")
-                        return  # Exit the function immediately
-
-                    # Proceed with deletion
-                    selected_entry = entries[choice - 1]
-                    decrypted_username = selected_entry[1]
-                    decrypted_password = selected_entry[2]
-
-                    # Delete the selected entry
-                    cursor.execute(
-                        f"DELETE FROM {user_key}_passwords WHERE service = ? AND username = ? AND password = ?",
-                        (service, decrypted_username, decrypted_password)
-                    )
-                    connection.commit()
-                    print(f"\nPassword entry {choice} for service '{service}' has been deleted.")
-                    break  # Exit the loop after a successful deletion
-
-                else:
-                    print(choice)  # Print the error message from `validate_number`
-
-        else:
-            # No entries found for the service, print the message and return to the menu
+        if not entries:
             print(f"No entries found for service '{service}'. Returning to the previous menu.\n")
             return  # Exit the function immediately
 
+        print(f"Entries for service '{service}':")
+        print_entries(entries)
+
+        choice = get_user_choice(entries)
+        if choice is None:
+            return  # Exit if user chose to exit
+
+        selected_entry = entries[int(choice) - 1]
+        decrypted_username = selected_entry[1]
+        decrypted_password = selected_entry[2]
+
+        # Proceed with deletion
+        cursor.execute(f"DELETE FROM {user_key}_passwords WHERE service = ? AND username = ? AND password = ?",
+                       (service, decrypted_username, decrypted_password))
+        connection.commit()
+
+        print(f"\nPassword entry {choice} for service '{service}' has been deleted.")
     except sqlite3.Error as e:
         print(f"An error occurred: {e}")
-
     finally:
-        # Ensure the cursor and connection are properly closed
         cursor.close()
         connection.close()
 
@@ -555,7 +571,7 @@ def main():
             # Log in process
             username = input("\nEnter your username (or type 'exit' to return to the main menu): ")
             if username.lower() == 'exit':
-                print("Returning to the main menu.")
+                print(dupe)
                 continue  # Go back to the main menu
 
             valid, username = validate_string(username, "username")
@@ -565,7 +581,7 @@ def main():
 
             password = masked_input("Enter your password (or type 'exit' to return to the main menu): ")
             if password.lower() == 'exit':
-                print("Returning to the main menu.")
+                print(dupe)
                 continue  # Go back to the main menu
 
             valid, password = validate_string(password, "password")
@@ -595,7 +611,7 @@ def main():
                         # Add a new entry
                         service = input("Enter the service name (or type 'exit' to return to the main menu): ")
                         if service.lower() == 'exit':
-                            print("Returning to the previous menu.")
+                            print(dupe)
                             break  # Go back to the previous menu
                         valid, service = validate_string(service, "service")
                         if not valid:
@@ -604,7 +620,7 @@ def main():
 
                         service_username = input("Enter the username (or type 'exit' to return to the previous menu): ")
                         if service_username.lower() == 'exit':
-                            print("Returning to the previous menu.")
+                            print(dupe)
                             break  # Go back to the previous menu
                         valid, service_username = validate_string(service_username, "username")
                         if not valid:
@@ -613,7 +629,7 @@ def main():
 
                         service_password = masked_input("Enter the password (or type 'exit' to return to the previous menu): ")
                         if service_password.lower() == 'exit':
-                            print("Returning to the previous menu.")
+                            print(dupe)
                             break  # Go back to the previous menu
                         valid, service_password = validate_string(service_password, "password")
                         if not valid:
@@ -637,7 +653,7 @@ def main():
                     elif choice == 4:
                         service = input("Enter the service entry to delete (or type 'exit' to return to the previous menu): ")
                         if service.lower() == 'exit':
-                            print("Returning to the previous menu.")
+                            print(dupe)
                             break  # Go back to the previous menu
                         valid, service = validate_string(service, "service")
                         if not valid:
@@ -655,7 +671,7 @@ def main():
 
                         elif "canceled" in result.lower():
                             # Deletion was canceled, stay logged in
-                            print("Returning to the menu...\n")
+                            print(dupe, "\n")
                             continue  # Stay logged in
 
                     elif choice == 6:
@@ -670,7 +686,7 @@ def main():
             while True:
                 username = input("Enter a new username (or type 'exit' to return to the main menu): ")
                 if username.lower() == 'exit':
-                    print("Returning to the main menu.")
+                    print(dupe)
                     break  # Go back to the main menu
                 valid, username = validate_string(username, "username")
                 if not valid:
@@ -680,7 +696,7 @@ def main():
                 if not user_exists(username):
                     password = masked_input("Enter a new password (or type 'exit' to return to the main menu): ")
                     if password.lower() == 'exit':
-                        print("Returning to the main menu.")
+                        print(dupe)
                         break  # Go back to the main menu
                     valid, password = validate_string(password, "password")
                     if not valid:
