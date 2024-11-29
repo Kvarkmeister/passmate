@@ -98,7 +98,7 @@ def masked_input(prompt="Enter password: "):
     print(prompt, end='', flush=True)
     password = ""
 
-    # Start listening for keypresses
+    # Start listening for key-presses
     while True:
         event = keyboard.read_event(suppress=True)  # Suppress echoes to the terminal
         if event.event_type == "down":  # Only handle key press, not release
@@ -521,9 +521,23 @@ def delete_user(username, password):
         connection.close()
 
 
+def display_logo():
+    logo = """
+    ██████╗  █████╗ ███████╗███████╗███╗   ███╗ █████╗ ████████╗███████╗
+    ██╔══██╗██╔══██╗██╔════╝██╔════╝████╗ ████║██╔══██╗╚══██╔══╝██╔════╝
+    ██████╔╝███████║███████╗█████╗  ██╔████╔██║███████║   ██║   █████╗  
+    ██╔═══╝ ██╔══██║╚════██║██╔══╝  ██║╚██╔╝██║██╔══██║   ██║   ██╔══╝  
+    ██║     ██║  ██║███████║███████╗██║ ╚═╝ ██║██║  ██║   ██║   ███████╗
+    ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═╝   ╚═╝   ╚══════╝
+
+    Welcome to the PassMate Password Manager!
+    """
+    print(logo)
+
+
 def main():
     while True:
-        print("\nWelcome to the PassMate Password Manager!\n")
+        display_logo()
         print("1. Log into an existing user")
         print("2. Create a new user")
         print("3. Exit the program\n")
