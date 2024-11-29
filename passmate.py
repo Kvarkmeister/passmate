@@ -1,5 +1,4 @@
 import os
-import mysql.connector
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -10,6 +9,7 @@ import bcrypt
 import sys
 import keyboard
 import re
+import sqlite3
 
 
 # File to store the encryption key
@@ -133,60 +133,62 @@ def get_encryption_key():
 ENCRYPTION_KEY = get_encryption_key()
 cipher = Fernet(ENCRYPTION_KEY)
 
-# MySQL connection
-
 
 def get_db_connection(database=None):
-    connection = mysql.connector.connect(
-        host='localhost',
-        user='root',
-        password='',
-        port=3308
-    )
+    try:
+        # Define the path to the database file
+        if database:
+            db_file = f"{database}.db"  # SQLite file will have a .db extension
 
-    if database:
-        cursor = connection.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
-        connection.commit()
-        connection.database = database
+            # Check if the database file already exists
+            if not os.path.exists(db_file):
+                # If it doesn't exist, create the database (this happens automatically in SQLite)
+                print(f"Database file '{db_file}' not found. Creating new database.")
 
-    return connection
+        # Connect to the SQLite database file (it will create the file if it doesn't exist)
+        connection = sqlite3.connect(db_file)
+
+        return connection
+
+    except sqlite3.Error as e:
+        print(f"Error: {e}")
+        return None
 
 
 # Create table for user-specific data (password storage table)
-def create_user_table(username=None):
+def create_user_table(username):
     connection = get_db_connection('passmate')
     cursor = connection.cursor()
 
-    # Ensure the 'users' table is created with correct collation
+    # Create the 'users' table if it doesn't exist
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        username VARCHAR(255) COLLATE utf8mb4_general_ci PRIMARY KEY,
+        username TEXT PRIMARY KEY,
         password BLOB NOT NULL
     )
     """)
-    connection.commit()
 
+    # Create the user-specific passwords table
     if username:
-        # Create the table for storing passwords for this user
         cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS {username}_passwords (
-            service VARCHAR(255) COLLATE utf8mb4_general_ci NOT NULL,
+            service TEXT NOT NULL,
             username BLOB NOT NULL,
             password BLOB NOT NULL,
             salt VARBINARY(16) NOT NULL,
             iv VARBINARY(16) NOT NULL,
             -- Relaxed constraint for service length
-            CONSTRAINT service_length CHECK (CHAR_LENGTH(service) >= 3),  
+            CONSTRAINT service_length CHECK (LENGTH(service) >= 3),  
             -- Relaxed constraint for username length
-            CONSTRAINT username_length CHECK (CHAR_LENGTH(username) >= 3), 
+            CONSTRAINT username_length CHECK (LENGTH(username) >= 3), 
             -- Relaxed constraint for password length
-            CONSTRAINT password_length CHECK (CHAR_LENGTH(password) >= 3)  
+            CONSTRAINT password_length CHECK (LENGTH(password) >= 3)  
         )
         """)
-        connection.commit()
 
-    connection.close()  # Closing connection once after all the queries are done
+    connection.commit()
+    cursor.close()
+    connection.close()
 
 
 # Generate or load AES encryption key from password
@@ -243,7 +245,8 @@ def authenticate_user(username, password):
     connection = get_db_connection('passmate')
     cursor = connection.cursor()
 
-    cursor.execute("SELECT password FROM users WHERE username = %s", (username,))
+    # Use ? placeholder for SQLite
+    cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
     user = cursor.fetchone()
 
     connection.close()
@@ -255,8 +258,6 @@ def authenticate_user(username, password):
 
 
 # Create a new user in the database
-
-
 def create_new_user(username, password):
     username = sanitize_string(username)  # Sanitize username
     password = sanitize_string(password)  # Sanitize password
@@ -269,8 +270,8 @@ def create_new_user(username, password):
     cursor = connection.cursor()
 
     try:
-        # Check if the username already exists in the database
-        cursor.execute("SELECT username FROM users WHERE username = %s COLLATE utf8mb4_general_ci", (username,))
+        # Check if the username already exists in the database (using ? for SQLite placeholder)
+        cursor.execute("SELECT username FROM users WHERE username = ?", (username,))
         user = cursor.fetchone()
         if user:
             print("Username already exists.")
@@ -280,14 +281,14 @@ def create_new_user(username, password):
         hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 
         # Proceed with user creation (insert the username and hashed password)
-        cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, hashed_password))
+        cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
         connection.commit()
 
         print(f"User '{username}' created successfully.")
         connection.close()
         return True
 
-    except mysql.connector.Error as err:
+    except sqlite3.Error as err:  # Handling SQLite specific errors
         print(f"Error: {err}")
         connection.close()
         return False
@@ -324,9 +325,9 @@ def save_password(service, username, password, user_key):
     encrypted_password = cipher.encrypt(password.encode())
 
     cursor.execute(f"""
-    INSERT INTO {user_key}_passwords (service, username, password, salt, iv)
-    VALUES (%s, %s, %s, %s, %s)
-    """, (service, encrypted_username, encrypted_password, b'', b''))
+        INSERT INTO {user_key}_passwords (service, username, password, salt, iv)
+        VALUES (?, ?, ?, ?, ?)
+        """, (service, encrypted_username, encrypted_password, b'', b''))
 
     connection.commit()
     connection.close()
@@ -338,8 +339,8 @@ def retrieve_password(user_key, service):
     connection = get_db_connection('passmate')
     cursor = connection.cursor()
 
-    # Retrieve all entries for the given service
-    cursor.execute(f"SELECT username, password FROM {user_key}_passwords WHERE service = %s", (service,))
+    # Retrieve all entries for the given service using SQLite syntax (with ? placeholder)
+    cursor.execute(f"SELECT username, password FROM {user_key}_passwords WHERE service = ?", (service,))
     entries = cursor.fetchall()
 
     connection.close()
@@ -364,8 +365,8 @@ def list_services(user_key):
     cursor = connection.cursor()
 
     try:
-        # Check if the table exists
-        cursor.execute(f"SHOW TABLES LIKE '{user_key}_passwords'")
+        # Check if the table exists in SQLite
+        cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{user_key}_passwords'")
         result = cursor.fetchone()
 
         if result:  # Table exists
@@ -381,7 +382,7 @@ def list_services(user_key):
         else:
             print(f"No password entries found for user {user_key}. Please add some services first.")
 
-    except mysql.connector.Error as e:
+    except sqlite3.Error as e:
         print(f"An error occurred: {e}")
     finally:
         cursor.close()
@@ -398,22 +399,24 @@ def user_exists(username):
     cursor = connection.cursor()
 
     try:
-        cursor.execute("SELECT username FROM users WHERE username = %s", (username,))
+        # Use the correct SQLite placeholder "?" for the query
+        cursor.execute("SELECT username FROM users WHERE username = ?", (username,))
         user = cursor.fetchone()
         connection.close()
 
         return user is not None
 
-    except mysql.connector.errors.ProgrammingError as e:
-        # If table doesn't exist, create the users table
-        if '1146' in str(e):  # MySQL-error code for "Table doesn't exist"
+    except sqlite3.OperationalError as e:
+        # If the table doesn't exist, create the users table
+        if 'no such table' in str(e):
             print("Users table does not exist. Creating it now...")
-            create_user_table(None)  # No need to pass username here; it's the table creation
+            create_user_table()  # Create the table without needing a username
             return False  # Return False as no users exist yet
         else:
             print(f"An error occurred: {e}")
             connection.close()
             return False
+
 
 
 # Delete a specific password entry for a service
@@ -424,7 +427,7 @@ def delete_password(service, user_key):
     try:
         # Retrieve all entries for the given service
         cursor.execute(f"SELECT service, username, password, salt, iv "
-                       f"FROM {user_key}_passwords WHERE service = %s", (service,))
+                       f"FROM {user_key}_passwords WHERE service = ?", (service,))
         entries = cursor.fetchall()
 
         if entries:
@@ -451,13 +454,13 @@ def delete_password(service, user_key):
 
                     # Proceed with deletion
                     selected_entry = entries[choice - 1]
-                    encrypted_username = selected_entry[1]
-                    encrypted_password = selected_entry[2]
+                    decrypted_username = selected_entry[1]
+                    decrypted_password = selected_entry[2]
 
                     # Delete the selected entry
                     cursor.execute(
-                        f"DELETE FROM {user_key}_passwords WHERE service = %s AND username = %s AND password = %s",
-                        (service, encrypted_username, encrypted_password)
+                        f"DELETE FROM {user_key}_passwords WHERE service = ? AND username = ? AND password = ?",
+                        (service, decrypted_username, decrypted_password)
                     )
                     connection.commit()
                     print(f"\nPassword entry {choice} for service '{service}' has been deleted.")
@@ -471,7 +474,7 @@ def delete_password(service, user_key):
             print(f"No entries found for service '{service}'. Returning to the previous menu.\n")
             return  # Exit the function immediately
 
-    except mysql.connector.Error as e:
+    except sqlite3.Error as e:
         print(f"An error occurred: {e}")
 
     finally:
@@ -487,7 +490,7 @@ def delete_user(username, password):
 
     try:
         # Retrieve the user's password from the database for verification
-        cursor.execute("SELECT password FROM users WHERE username = %s", (username,))
+        cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
         user = cursor.fetchone()
 
         if user and bcrypt.checkpw(password.encode(), user[0]):  # No need for user[0].encode()
@@ -498,7 +501,7 @@ def delete_user(username, password):
 
             if confirmation == 'DELETE':
                 # Proceed with account deletion
-                cursor.execute("DELETE FROM users WHERE username = %s", (username,))
+                cursor.execute("DELETE FROM users WHERE username = ?", (username,))
                 cursor.execute(f"DROP TABLE IF EXISTS {username}_passwords")  # Drop the user's passwords table
                 connection.commit()
                 print(f"Account for user '{username}' has been deleted successfully.")
@@ -512,7 +515,7 @@ def delete_user(username, password):
             print("Password does not match. Account deletion aborted.")
             return "Password does not match. Account deletion aborted."
 
-    except mysql.connector.Error as e:
+    except sqlite3.Error as e:
         print(f"An error occurred: {e}")
         return "An error occurred while deleting the account."
 
