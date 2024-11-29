@@ -215,39 +215,42 @@ def load_or_create_aes_key(password, salt):
 
 def encrypt(data, password):
     """
-    Encrypt data using AES with CBC mode and PKCS7 padding.
-    Returns the salt, IV, and encrypted data.
+    Encrypt data using AES with GCM mode and PKCS7 padding.
+    Returns the salt, IV, encrypted data, and authentication tag.
     """
     salt = os.urandom(16)  # Generate random salt for key derivation
     key = load_or_create_aes_key(password, salt)  # Derive the key from the password and salt
-    iv = os.urandom(16)  # Generate a random IV for CBC mode
+    iv = os.urandom(12)  # GCM uses a 12-byte nonce (IV)
 
-    # Create the AES cipher object in CBC mode
-    ciphertext = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    # Create the AES cipher object in GCM mode
+    secret = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
 
     # Pad data to be a multiple of the block size (16 bytes for AES)
     padder = padding.PKCS7(128).padder()  # 128 bits = 16 bytes (AES block size)
     padded_data = padder.update(data.encode()) + padder.finalize()
 
     # Encrypt the padded data
-    encryptor = ciphertext.encryptor()
+    encryptor = secret.encryptor()
     encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
 
-    return salt, iv, encrypted_data
+    # Get the authentication tag from the cipher
+    tag = encryptor.tag
+
+    return salt, iv, encrypted_data, tag
 
 
-def decrypt(encrypted_data, password, salt, iv):
+def decrypt(encrypted_data, password, salt, iv, tag):
     """
-    Decrypt data using AES with CBC mode and PKCS7 padding.
+    Decrypt data using AES with GCM mode and PKCS7 padding.
     Returns the decrypted data as a string.
     """
     key = load_or_create_aes_key(password, salt)  # Derive the key from the password and salt
 
-    # Create the AES cipher object in CBC mode
-    ciphertext = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    # Create the AES cipher object in GCM mode
+    secret = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
 
     # Decrypt the data
-    decryptor = ciphertext.decryptor()
+    decryptor = secret.decryptor()
     decrypted_data = decryptor.update(encrypted_data) + decryptor.finalize()
 
     # Remove padding after decryption
