@@ -14,6 +14,7 @@ import logging
 # File to store the encryption key
 KEY_FILE = "encryption_key.key"
 dupe = "Returning to the main menu."
+dupe_db = "Database connection closed."
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -340,7 +341,7 @@ def create_user_table(username):
             cursor.close()
         if connection:
             connection.close()
-        logging.info("Database connection closed.")
+        logging.info(dupe_db)
 
 
 # Generate or load AES encryption key from password
@@ -531,7 +532,7 @@ def create_new_user(username, password):
         # Ensure the database connection is always closed if it was created
         if connection:
             connection.close()
-            logging.info("Database connection closed.")
+            logging.info(dupe_db)
 
     return True
 
@@ -608,7 +609,7 @@ def save_password(service, username, password, user_key):
         # Ensure the database connection is always closed
         if connection:
             connection.close()
-            logging.info("Database connection closed.")
+            logging.info(dupe_db)
 
 # Retrieve all passwords for a service
 
