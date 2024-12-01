@@ -4,6 +4,9 @@
 
 PassMate is designed as a rudimentary proof-of-concept password management ensuring security.
 
+Link to the report:
+https://docs.google.com/document/d/1_A1BKry2RI-DzSgCGABnrT3cnROFiwF14vYYrAv3CvA/edit?usp=drivesdk
+
 ## Table of Contents
 
 ## Features
