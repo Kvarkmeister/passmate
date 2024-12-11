@@ -7,8 +7,6 @@ PassMate is designed as a rudimentary proof-of-concept password management ensur
 Link to the report:
 https://docs.google.com/document/d/1_A1BKry2RI-DzSgCGABnrT3cnROFiwF14vYYrAv3CvA/edit?usp=drivesdk
 
-## Table of Contents
-
 ## Features
 * **User Authentication**: log-in using BCrypt hashing
 * **Password Management**: add, retrieve and delete service credentials using AES ciphers
